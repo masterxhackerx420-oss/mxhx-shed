@@ -81,3 +81,62 @@ export type NpmResult = NpmSnap | Fail;
 export type CompareResult = CompareSnap | Fail;
 export type ScrapeResult = ScrapeSnap | Fail;
 export type DnsResult = DnsSnap | Fail;
+
+export type RdapSnap = {
+  ok: true;
+  name: string;
+  statuses: string[];
+  registrar: string;
+  events: { action: string; date: string }[];
+  nameservers: string[];
+};
+
+export type HeadSnap = {
+  ok: true;
+  url: string;
+  status: number;
+  hops: number;
+  headers: { name: string; value: string }[];
+  cookies: string[];
+  notes: string[];
+};
+
+export type CertRow = {
+  name: string;
+  names: string[];
+  issuer: string;
+  notBefore: string;
+  notAfter: string;
+};
+
+export type CertSnap = {
+  ok: true;
+  query: string;
+  rows: CertRow[];
+  extra: number;
+};
+
+export type RouteSnap = {
+  ok: true;
+  query: string;
+  address: string;
+  prefix: string;
+  asn: string;
+  holder: string;
+  announced: boolean;
+};
+
+export type RobotsSnap = {
+  ok: true;
+  host: string;
+  robotsStatus: number;
+  robots: string;
+  securityStatus: number;
+  security: string;
+};
+
+export type RdapResult = RdapSnap | Fail;
+export type HeadResult = HeadSnap | Fail;
+export type CertResult = CertSnap | Fail;
+export type RouteResult = RouteSnap | Fail;
+export type RobotsResult = RobotsSnap | Fail;

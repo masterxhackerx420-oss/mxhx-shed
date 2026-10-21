@@ -88,6 +88,41 @@ export const BENCHES = [
     image: "/brand/steno.jpg",
     alt: "Dip pen, crimson ink, and a wax seal",
   },
+  {
+    id: "rdap",
+    word: "RDAP",
+    subtitle: "who registered the name",
+    image: "/brand/rdap.jpg",
+    alt: "Leather registry ledger, brass seal press, and red wax",
+  },
+  {
+    id: "head",
+    word: "HEAD",
+    subtitle: "headers on a public url",
+    image: "/brand/head.jpg",
+    alt: "Brass spyglass over sealed cream envelopes",
+  },
+  {
+    id: "cert",
+    word: "CERT",
+    subtitle: "names on public certs",
+    image: "/brand/cert.jpg",
+    alt: "Brass key, gold ribbon, and a cracked red wax seal",
+  },
+  {
+    id: "route",
+    word: "ROUTE",
+    subtitle: "address, asn, and prefix",
+    image: "/brand/route.jpg",
+    alt: "Brass compass and dividers on a dark chart",
+  },
+  {
+    id: "robots",
+    word: "ROBOTS",
+    subtitle: "robots.txt and security.txt",
+    image: "/brand/robots.jpg",
+    alt: "A small iron gate, brass padlock, and a blank card",
+  },
 ] as const;
 
 export type BenchId = (typeof BENCHES)[number]["id"];

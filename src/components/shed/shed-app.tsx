@@ -2,10 +2,13 @@ import { useState } from "react";
 import { BENCHES, type BenchId } from "@/lib/shed/ascii";
 import { RANKS, StampProvider, rankFor, useStamps } from "@/lib/shed/stamps";
 import { DnsBench } from "@/components/shed/dns-bench";
+import { CertBench, HeadBench, RdapBench, RobotsBench, RouteBench } from "@/components/shed/osint-benches";
 import { PhoneBench } from "@/components/shed/phone-bench";
 import { ScrapeBench } from "@/components/shed/scrape-bench";
 import { StenoBench } from "@/components/shed/steno-bench";
 import { VersionsBench } from "@/components/shed/versions-bench";
+import { InstallCard, SectionArt } from "@/components/shed/ui";
+import { SHED_INSTALL } from "@/lib/shed/installs";
 
 function RankPlate() {
   const { stamps, ready, clear } = useStamps();
@@ -14,7 +17,7 @@ function RankPlate() {
     <div className="min-w-0 sm:w-64">
       <div className="flex items-baseline justify-between gap-3">
         <p className="font-display text-xl tracking-wide text-gold">{ready ? rank.label : "…"}</p>
-        <p className="text-sm text-mute tabular-nums">{stamps.length}/15</p>
+        <p className="text-sm text-mute tabular-nums">{stamps.length} stamps</p>
       </div>
       <div className="mt-2 flex gap-1" aria-hidden="true">
         {RANKS.map((item) => (
@@ -55,6 +58,10 @@ function Shed() {
         </div>
         <RankPlate />
       </div>
+      <section className="mt-4 flex flex-col gap-3">
+        <SectionArt src="/brand/install.jpg" alt="Three tool rolls on a black bench: steel, aluminum, and walnut." />
+        <InstallCard title="Install the shed" blurb={SHED_INSTALL.blurb} kits={SHED_INSTALL.kits} />
+      </section>
       <nav className="sticky top-0 z-20 mt-4 grid grid-cols-5 gap-1 bg-soot/95 py-2 backdrop-blur" aria-label="Benches">
         {BENCHES.map((item) => {
           const on = bench === item.id;
@@ -67,7 +74,7 @@ function Shed() {
               className={`min-h-11 overflow-hidden rounded-md ring-1 ${on ? "ring-gold" : "ring-line"}`}
             >
               <NavThumb src={item.image} />
-              <span className="block py-1 text-center font-display text-xs tracking-widest text-bone">{item.word}</span>
+              <span className="block truncate px-0.5 py-1 text-center font-display text-[10px] tracking-wide text-bone sm:text-xs">{item.word}</span>
             </button>
           );
         })}
@@ -78,9 +85,14 @@ function Shed() {
         {bench === "dns" ? <DnsBench /> : null}
         {bench === "phone" ? <PhoneBench /> : null}
         {bench === "steno" ? <StenoBench /> : null}
+        {bench === "rdap" ? <RdapBench /> : null}
+        {bench === "head" ? <HeadBench /> : null}
+        {bench === "cert" ? <CertBench /> : null}
+        {bench === "route" ? <RouteBench /> : null}
+        {bench === "robots" ? <RobotsBench /> : null}
       </main>
       <footer className="mt-8 border-t border-line py-4 text-sm text-mute">
-        Public pages, public DNS, public registries, numbering plans, and notes that stay in this browser. No people search. No private networks.
+        Public pages, public DNS, public registries, certificates, routes, and notes that stay in this browser. Infrastructure OSINT only. No people search. No private networks.
       </footer>
     </div>
   );

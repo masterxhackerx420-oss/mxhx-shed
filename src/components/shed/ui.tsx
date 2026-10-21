@@ -1,5 +1,6 @@
 import { useId, useState, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
 import { BENCHES, type BenchId, banner, githubFence } from "@/lib/shed/ascii";
+import { TOOL_INSTALL, type Kit } from "@/lib/shed/installs";
 import { useStamps } from "@/lib/shed/stamps";
 
 export function when(iso: string | null): string {
@@ -154,6 +155,53 @@ export function AsciiHeader({ word, subtitle }: { word: string; subtitle: string
   );
 }
 
+export function InstallCard({ title, blurb, kits }: { title: string; blurb: string; kits: Kit[] }) {
+  const [id, setId] = useState(kits[0]?.id ?? "linux");
+  const [copied, setCopied] = useState(false);
+  const kit = kits.find((item) => item.id === id) ?? kits[0];
+  if (!kit) return null;
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(kit.commands);
+    } catch {
+      const area = document.createElement("textarea");
+      area.value = kit.commands;
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  }
+
+  return (
+    <div className="rounded-md bg-panel p-4 ring-1 ring-line">
+      <p className="font-display text-xs tracking-widest text-gold">{title}</p>
+      <p className="mt-1 text-sm text-mute">{blurb}</p>
+      <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Operating system">
+        {kits.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            aria-pressed={item.id === kit.id}
+            onClick={() => setId(item.id)}
+            className={`min-h-11 rounded-md px-3 text-sm ring-1 ${item.id === kit.id ? "bg-gold text-soot ring-gold" : "text-bone ring-line"}`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-3 text-sm text-bone">{kit.note}</p>
+      <pre className="mt-2 overflow-x-auto rounded-md bg-soot p-3 font-mono text-xs leading-relaxed whitespace-pre text-bone">{kit.commands}</pre>
+      <Button type="button" tone="ghost" className="mt-3" onClick={() => void copy()}>
+        {copied ? "Copied" : `Copy ${kit.label} commands`}
+      </Button>
+    </div>
+  );
+}
+
 export function BenchFrame({
   id,
   steps,
@@ -169,6 +217,9 @@ export function BenchFrame({
     <section className="flex min-w-0 flex-col gap-4">
       <SectionArt src={bench.image} alt={bench.alt} />
       <AsciiHeader word={bench.word} subtitle={bench.subtitle} />
+      {TOOL_INSTALL[bench.id] ? (
+        <InstallCard title="Install locally" blurb={TOOL_INSTALL[bench.id].blurb} kits={TOOL_INSTALL[bench.id].kits} />
+      ) : null}
       <Path steps={steps} />
       {children}
     </section>

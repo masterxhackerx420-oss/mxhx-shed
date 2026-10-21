@@ -1,5 +1,17 @@
 import { createServerFn } from "@tanstack/react-start";
-import type { CompareResult, DnsResult, Fail, GithubResult, NpmResult, ScrapeResult } from "@/lib/shed/types";
+import type {
+  CertResult,
+  CompareResult,
+  DnsResult,
+  Fail,
+  GithubResult,
+  HeadResult,
+  NpmResult,
+  RdapResult,
+  RobotsResult,
+  RouteResult,
+  ScrapeResult,
+} from "@/lib/shed/types";
 
 const hits: number[] = [];
 
@@ -694,3 +706,318 @@ export const lookupDns = createServerFn({ method: "POST" })
     );
     return { ok: true, queried, type, note, rows };
   });
+
+function hostIn(input: unknown): { host: string } {
+  const bag = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  return { host: typeof bag.host === "string" ? bag.host : "" };
+}
+
+function urlIn(input: unknown): { url: string } {
+  const bag = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  return { url: typeof bag.url === "string" ? bag.url : "" };
+}
+
+function domainOnly(raw: string): string | null {
+  const host = cleanHost(raw);
+  if (!host || reverseIp(host)) return null;
+  return host;
+}
+
+async function fetchJson(url: string, max = 220_000): Promise<{ status: number; data: unknown } | Fail> {
+  try {
+    const res = await fetch(url, {
+      headers: { accept: "application/json", "user-agent": "MXHX-Shed/1.0" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(12000),
+    });
+    const text = await readBounded(res, max);
+    if (res.status === 404) return fail("Nothing public came back for that.");
+    if (res.status === 429) return fail("That public index is busy. Try again in a minute.");
+    if (!res.ok || res.status === 0) return fail(`The public index returned ${res.status}.`);
+    try {
+      return { status: res.status, data: JSON.parse(text) as unknown };
+    } catch {
+      return fail("The public index did not return readable JSON.");
+    }
+  } catch {
+    return fail("That public index took too long.");
+  }
+}
+
+function vcardName(entity: { vcardArray?: unknown; handle?: string }): string {
+  const card = entity.vcardArray;
+  if (Array.isArray(card) && Array.isArray(card[1])) {
+    for (const row of card[1]) {
+      if (Array.isArray(row) && row[0] === "fn" && typeof row[3] === "string") return row[3].slice(0, 120);
+    }
+  }
+  return (entity.handle ?? "").slice(0, 80);
+}
+
+export const readRdap = createServerFn({ method: "POST" })
+  .validator(hostIn)
+  .handler(async ({ data }): Promise<RdapResult> => {
+    const limited = cooled();
+    if (limited) return fail(limited);
+    const host = domainOnly(data.host);
+    if (!host) return fail("Enter a public domain, not an address.");
+    const fetched = await fetchJson(`https://rdap.org/domain/${encodeURIComponent(host)}`);
+    if ("ok" in fetched) return fetched;
+    const body = fetched.data;
+    if (!body || typeof body !== "object") return fail("RDAP returned an empty record.");
+    const record = body as {
+      ldhName?: string;
+      status?: string[];
+      nameservers?: { ldhName?: string }[];
+      events?: { eventAction?: string; eventDate?: string }[];
+      entities?: { roles?: string[]; vcardArray?: unknown; handle?: string }[];
+      errorCode?: number;
+      title?: string;
+    };
+    if (record.errorCode) return fail(record.title || "No public registration for that name.");
+    const want = new Set(["registration", "expiration", "last changed", "last update of rdap database", "registrar expiration"]);
+    const registrar = (record.entities ?? []).find((entity) => (entity.roles ?? []).some((role) => role.toLowerCase() === "registrar"));
+    return {
+      ok: true,
+      name: record.ldhName || host,
+      statuses: (record.status ?? []).slice(0, 8),
+      registrar: registrar ? vcardName(registrar) || "Registrar listed, name withheld" : "No registrar in the public record",
+      events: (record.events ?? [])
+        .filter((event) => event.eventAction && want.has(event.eventAction.toLowerCase()))
+        .slice(0, 6)
+        .map((event) => ({ action: event.eventAction ?? "", date: (event.eventDate ?? "").slice(0, 25) })),
+      nameservers: (record.nameservers ?? [])
+        .map((ns) => ns.ldhName ?? "")
+        .filter(Boolean)
+        .slice(0, 8),
+    };
+  });
+
+export const readHeaders = createServerFn({ method: "POST" })
+  .validator(urlIn)
+  .handler(async ({ data }): Promise<HeadResult> => {
+    const limited = cooled();
+    if (limited) return fail(limited);
+    let current: URL;
+    const seeded = /^[a-z][a-z0-9+.-]*:\/\//i.test(data.url.trim()) ? data.url.trim() : `https://${data.url.trim()}`;
+    try {
+      current = new URL(seeded);
+    } catch {
+      return fail("That does not look like a URL.");
+    }
+    let hops = 0;
+    for (let hop = 0; hop < 4; hop += 1) {
+      if (current.protocol !== "http:" && current.protocol !== "https:") return fail("Only public http and https.");
+      if (current.username || current.password) return fail("Drop the username and password from the URL.");
+      if (current.port && current.port !== "80" && current.port !== "443") return fail("The shed only reads the usual web ports.");
+      const blocked = hostBlocked(current.hostname);
+      if (blocked) return fail(blocked);
+      let res: Response;
+      try {
+        res = await fetch(current, {
+          method: "HEAD",
+          redirect: "manual",
+          headers: { accept: "*/*", "user-agent": "MXHX-Shed/1.0 (header read)" },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (res.status === 405 || res.status === 501) {
+          await res.body?.cancel().catch(() => undefined);
+          res = await fetch(current, {
+            method: "GET",
+            redirect: "manual",
+            headers: { accept: "*/*", "user-agent": "MXHX-Shed/1.0 (header read)" },
+            signal: AbortSignal.timeout(8000),
+          });
+        }
+      } catch {
+        return fail("That host took too long, or did not answer.");
+      }
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get("location");
+        await res.body?.cancel().catch(() => undefined);
+        if (!loc) return fail("The redirect had nowhere to go.");
+        current = new URL(loc, current);
+        hops += 1;
+        continue;
+      }
+      const keep = [
+        "server",
+        "content-type",
+        "strict-transport-security",
+        "content-security-policy",
+        "x-frame-options",
+        "x-content-type-options",
+        "referrer-policy",
+        "permissions-policy",
+        "cache-control",
+      ];
+      const headers = keep
+        .map((name) => {
+          const value = res.headers.get(name);
+          return value ? { name, value: value.slice(0, 180) } : null;
+        })
+        .filter((row): row is { name: string; value: string } => Boolean(row));
+      const rawCookies = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+      const cookies = rawCookies
+        .map((cookie) => (cookie.split("=")[0] ?? "").trim())
+        .filter(Boolean)
+        .slice(0, 8);
+      await res.body?.cancel().catch(() => undefined);
+      const has = (name: string) => headers.some((row) => row.name === name);
+      const notes = [
+        current.protocol === "https:" ? "The final address is HTTPS." : "The final address is plain HTTP.",
+        has("strict-transport-security") ? "HSTS is published." : "No HSTS header on this response.",
+        has("content-security-policy") ? "A content security policy is published." : "No content security policy on this response.",
+        hops ? `Followed ${hops} redirect${hops === 1 ? "" : "s"}.` : "No redirect.",
+      ];
+      return { ok: true, url: current.href, status: res.status, hops, headers, cookies, notes };
+    }
+    return fail("Too many redirects.");
+  });
+
+function issuerShort(raw: string): string {
+  const org = raw.match(/O=([^,]+)/);
+  return (org?.[1] ?? raw).replace(/\\,/g, ",").slice(0, 80);
+}
+
+export const readCerts = createServerFn({ method: "POST" })
+  .validator(hostIn)
+  .handler(async ({ data }): Promise<CertResult> => {
+    const limited = cooled();
+    if (limited) return fail(limited);
+    const host = domainOnly(data.host);
+    if (!host) return fail("Enter a public domain, not an address.");
+    const spot = await fetchJson(
+      `https://api.certspotter.com/v1/issuances?domain=${encodeURIComponent(host)}&include_subdomains=false&expand=dns_names&expand=issuer`,
+    );
+    if (!("ok" in spot) && Array.isArray(spot.data)) {
+      const rows = spot.data.slice(0, 8).flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const row = item as { dns_names?: string[]; issuer?: { friendly_name?: string }; not_before?: string; not_after?: string };
+        const names = (row.dns_names ?? []).filter((name) => typeof name === "string").slice(0, 6);
+        return [
+          {
+            name: (names[0] || host).slice(0, 120),
+            names,
+            issuer: (row.issuer?.friendly_name ?? "").slice(0, 80),
+            notBefore: (row.not_before ?? "").slice(0, 25),
+            notAfter: (row.not_after ?? "").slice(0, 25),
+          },
+        ];
+      });
+      return { ok: true, query: host, rows, extra: Math.max(0, spot.data.length - rows.length) };
+    }
+    const fetched = await fetchJson(`https://crt.sh/?q=${encodeURIComponent(host)}&output=json`, 400_000);
+    if ("ok" in fetched) return spot && "ok" in spot ? spot : fetched;
+    if (!Array.isArray(fetched.data)) return fail("The certificate index returned an unexpected shape.");
+    const seen = new Set<string>();
+    const rows: { name: string; names: string[]; issuer: string; notBefore: string; notAfter: string }[] = [];
+    for (const item of fetched.data) {
+      if (!item || typeof item !== "object") continue;
+      const row = item as { common_name?: string; name_value?: string; issuer_name?: string; not_before?: string; not_after?: string };
+      const name = (row.common_name || host).slice(0, 120);
+      const key = `${name}|${row.not_after ?? ""}|${row.issuer_name ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (rows.length >= 8) continue;
+      const names = Array.from(
+        new Set(
+          String(row.name_value ?? "")
+            .split("\n")
+            .map((part) => part.trim())
+            .filter(Boolean),
+        ),
+      ).slice(0, 6);
+      rows.push({
+        name,
+        names,
+        issuer: issuerShort(row.issuer_name ?? ""),
+        notBefore: (row.not_before ?? "").slice(0, 25),
+        notAfter: (row.not_after ?? "").slice(0, 25),
+      });
+    }
+    return { ok: true, query: host, rows, extra: Math.max(0, seen.size - rows.length) };
+  });
+
+export const readRoute = createServerFn({ method: "POST" })
+  .validator(hostIn)
+  .handler(async ({ data }): Promise<RouteResult> => {
+    const limited = cooled();
+    if (limited) return fail(limited);
+    const host = cleanHost(data.host);
+    if (!host) return fail("Enter a public domain or an IPv4 address.");
+    const blocked = hostBlocked(host);
+    if (blocked) return fail(blocked);
+    let address = host;
+    if (!reverseIp(host)) {
+      const looked = await askResolver(RESOLVERS[0].href(host, "A"));
+      const found = looked.answers.map((row) => row.data.trim()).find((item) => /^\d{1,3}(\.\d{1,3}){3}$/.test(item));
+      if (!found) return fail("No public IPv4 address came back for that name.");
+      const denied = hostBlocked(found);
+      if (denied) return fail(denied);
+      address = found;
+    }
+    const fetched = await fetchJson(`https://stat.ripe.net/data/prefix-overview/data.json?resource=${encodeURIComponent(address)}`);
+    if ("ok" in fetched) return fetched;
+    const record = fetched.data as {
+      data?: {
+        announced?: boolean;
+        resource?: string;
+        asns?: { asn?: number; holder?: string }[];
+        block?: { resource?: string };
+      };
+    };
+    const first = record.data?.asns?.[0];
+    return {
+      ok: true,
+      query: host,
+      address,
+      prefix: record.data?.resource || record.data?.block?.resource || "No covering prefix published",
+      asn: first?.asn ? `AS${first.asn}` : "No ASN on that prefix",
+      holder: (first?.holder ?? "No holder name published").slice(0, 160),
+      announced: Boolean(record.data?.announced),
+    };
+  });
+
+async function fetchNoted(url: string): Promise<{ status: number; body: string }> {
+  try {
+    const res = await fetch(url, {
+      redirect: "manual",
+      headers: { accept: "text/plain", "user-agent": "MXHX-Shed/1.0" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.status >= 300 && res.status < 400) {
+      await res.body?.cancel().catch(() => undefined);
+      return { status: res.status, body: "That file redirected. The shed does not follow it." };
+    }
+    const body = await readBounded(res, 12_000);
+    return { status: res.status, body: body.split("\n").slice(0, 40).join("\n").slice(0, 4000) };
+  } catch {
+    return { status: 0, body: "" };
+  }
+}
+
+export const readRobots = createServerFn({ method: "POST" })
+  .validator(hostIn)
+  .handler(async ({ data }): Promise<RobotsResult> => {
+    const limited = cooled();
+    if (limited) return fail(limited);
+    const host = domainOnly(data.host);
+    if (!host) return fail("Enter a public domain, not an address.");
+    const blocked = hostBlocked(host);
+    if (blocked) return fail(blocked);
+    const [robots, security] = await Promise.all([
+      fetchNoted(`https://${host}/robots.txt`),
+      fetchNoted(`https://${host}/.well-known/security.txt`),
+    ]);
+    if (robots.status === 0 && security.status === 0) return fail("That host took too long, or did not answer.");
+    return {
+      ok: true,
+      host,
+      robotsStatus: robots.status,
+      robots: robots.body || (robots.status === 404 ? "No robots.txt." : ""),
+      securityStatus: security.status,
+      security: security.body || (security.status === 404 ? "No security.txt." : ""),
+    };
+  });
+
