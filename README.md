@@ -1,3 +1,9 @@
+<p align="center">
+  <a href="https://hits.sh/github.com/masterxhackerx420-oss/mxhx-shed/">
+    <img src="https://hits.sh/github.com/masterxhackerx420-oss/mxhx-shed.svg?style=for-the-badge&label=Visitors&color=8b5cf6&logo=eye" alt="Visitors" />
+  </a>
+</p>
+
 # MXHX Shed
 
 Beginner to God Mode. Ten benches. Public infrastructure only.
